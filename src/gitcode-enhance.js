@@ -12,7 +12,7 @@
   // Tampermonkey 在有 @grant 时会把 window 换成沙箱代理，直接改 window.fetch 只会改到沙箱里的副本，
   // 页面代码看不到。要拦截页面请求必须打到页面真正的 window（unsafeWindow）上。
   const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-  const VERSION = '0.3.5';
+  const VERSION = '0.3.6';
   const PR_PAGE_RE = /^\/[^/]+\/[^/]+\/(?:pull|merge_requests)\/\d+(?:\/discuss)?\/?$/;
 
   function log(...args) {

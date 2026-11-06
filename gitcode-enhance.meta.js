@@ -2,7 +2,7 @@
 // @name         GitCode / AtomGit 增强
 // @name:en      GitCode Enhance
 // @namespace    https://github.com/JavaZeroo/gitcode-enhance
-// @version      0.3.5
+// @version      0.3.6
 // @description  GitCode 评审增强：Ctrl+F 跨文件差异搜索与高亮、回到顶部、可配置悬浮工具、去干扰和按需性能优化
 // @description:en  Cross-file PR diff search and highlighting, back to top, configurable floating tools, decluttering and on-demand optimizations
 // @author       JavaZeroo
