@@ -12,7 +12,7 @@
   // Tampermonkey 在有 @grant 时会把 window 换成沙箱代理，直接改 window.fetch 只会改到沙箱里的副本，
   // 页面代码看不到。要拦截页面请求必须打到页面真正的 window（unsafeWindow）上。
   const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-  const VERSION = '0.3.7';
+  const VERSION = '0.3.8';
   const PR_PAGE_RE = /^\/[^/]+\/[^/]+\/(?:pull|merge_requests)\/\d+(?:\/discuss)?\/?$/;
 
   function log(...args) {
@@ -1437,27 +1437,29 @@
   function installHeaderMenuClicks() {
     const menus = [
       { trigger: '.g-toolbar-right #guide-step3', content: '#gitcode-header-create-menu' },
-      { trigger: '.g-toolbar-right .g-notice-btn', content: '.g-user-dropdown .message-box' },
-      { trigger: '.g-toolbar-right .g-user-avatar', content: '.g-user-dropdown .g-user-drawer' },
+      { trigger: '.g-toolbar-right .g-notice-btn', content: '.g-user-dropdown .message-box', desktopOnly: true },
+      { trigger: '.g-toolbar-right .g-user-avatar', content: '.g-user-dropdown .g-user-drawer', desktopOnly: true },
     ];
     const triggers = menus.map(menu => menu.trigger).join(', ');
     const contents = menus.map(menu => menu.content).join(', ');
-    const forwarded = new WeakSet();
-    const visible = panel => panel.getClientRects().length > 0;
-    const mountedMenus = () => menus.map(menu => ({
+    let forwarding = false;
+    const visible = panel => !!panel && panel.getClientRects().length > 0;
+    // 站点在宽度 <= 1024px 时将通知/头像换成链接/抽屉；弹层则在首次打开后才创建。
+    const currentMenus = () => menus.filter(menu => !menu.desktopOnly || W.innerWidth > 1024).map(menu => ({
       trigger: document.querySelector(menu.trigger),
       panel: document.querySelector(menu.content)?.closest('.devui-flexible-overlay'),
-    })).filter(menu => menu.trigger && menu.panel);
+    })).filter(menu => menu.trigger);
     function forward(trigger, type) {
-      const event = new W.MouseEvent(type);
-      forwarded.add(event);
-      trigger.dispatchEvent(event);
+      // dispatchEvent 同步调用监听器；跨沙箱时不依赖 Event 包装对象的身份。
+      forwarding = true;
+      try { trigger.dispatchEvent(new W.MouseEvent(type)); }
+      finally { forwarding = false; }
     }
     function closeMenus() {
-      for (const menu of mountedMenus()) if (visible(menu.panel)) forward(menu.trigger, 'mouseleave');
+      for (const menu of currentMenus()) if (visible(menu.panel)) forward(menu.trigger, 'mouseleave');
     }
     function blockHover(event) {
-      if (forwarded.has(event)) return;
+      if (forwarding) return;
       const target = event.target;
       if (target.matches?.(triggers) ||
           (target.matches?.('.devui-flexible-overlay, .devui-dropdown__menu-wrap') && target.querySelector(contents))) {
@@ -1470,13 +1472,13 @@
     document.addEventListener('click', event => {
       const trigger = event.target.closest?.(triggers);
       if (trigger && (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) return;
-      const mounted = mountedMenus();
+      const mounted = currentMenus();
       const current = mounted.find(menu => menu.trigger === trigger);
       const wasOpen = current && visible(current.panel);
       for (const menu of mounted) {
         if (visible(menu.panel) && !menu.panel.contains(event.target)) forward(menu.trigger, 'mouseleave');
       }
-      // 移动布局没有桌面弹层，保留通知链接和头像抽屉的原生点击行为。
+      // 移动布局保留通知链接和头像抽屉的原生点击行为。
       if (!current) return;
       event.preventDefault();
       event.stopPropagation();

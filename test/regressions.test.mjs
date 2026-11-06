@@ -30,7 +30,10 @@ function harness(path = '/org/repo/pull/10/discuss') {
       querySelector: () => button, querySelectorAll: selector => selector === '.collapse-btn__more' && button ? [button] : [],
       getElementsByTagName: () => uses,
     },
-    MutationObserver: Observer, MouseEvent: class { constructor(type) { this.type = type; } }, XMLHttpRequest: XHR,
+    MutationObserver: Observer, MouseEvent: class {
+      constructor(type) { this.type = type; }
+      stopImmediatePropagation() { this.immediateStopped = true; }
+    }, XMLHttpRequest: XHR,
     setTimeout(fn) { timers.set(++nextId, fn); return nextId; },
     clearTimeout(id) { timers.delete(id); },
     innerHeight: 800, innerWidth: 1200,
@@ -58,7 +61,7 @@ function harness(path = '/org/repo/pull/10/discuss') {
   };
 }
 
-function headerMenusHarness() {
+function headerMenusHarness({ wrapEvents = false } = {}) {
   const h = harness(), nodes = new Map();
   const selectors = [
     ['.g-toolbar-right #guide-step3', '#gitcode-header-create-menu'],
@@ -88,7 +91,8 @@ function headerMenusHarness() {
       closest(value) { return this.matches(value) ? this : null; },
       dispatchEvent(event) {
         event.target = this;
-        h.event(event.type, false, event);
+        // 模拟脚本沙箱：捕获监听器可能收到另一个包装对象。
+        h.event(event.type, false, wrapEvents ? new Proxy(event, {}) : event);
         if (event.immediateStopped) return;
         if (event.type === 'mouseenter') open = true;
         if (event.type === 'mouseleave') h.context.setTimeout(() => { open = false; });
@@ -142,15 +146,39 @@ test('header menus switch on click, preserve menu actions, and close outside or 
   assert.equal(avatar.isOpen(), false);
 });
 
+test('header menu clicks survive event wrappers across userscript and page worlds', () => {
+  const { menus, emit, h } = headerMenusHarness({ wrapEvents: true });
+  for (const menu of menus) {
+    emit('click', menu.trigger);
+    assert.equal(menu.isOpen(), true);
+    assert.equal(emit('mouseenter', menu.trigger).immediateStopped, true);
+    emit('click', menu.trigger); h.flush();
+    assert.equal(menu.isOpen(), false);
+  }
+});
+
+test('first click opens header menus before their lazy panels exist', () => {
+  const { menus, emit, nodes, h } = headerMenusHarness({ wrapEvents: true });
+  const contents = ['#gitcode-header-create-menu', '.g-user-dropdown .message-box', '.g-user-dropdown .g-user-drawer'];
+  contents.forEach(selector => nodes.delete(selector));
+  for (const [index, menu] of menus.entries()) {
+    assert.equal(emit('click', menu.trigger).defaultPrevented, true);
+    assert.equal(menu.isOpen(), true, 'opening must not require a panel that only mounts after opening');
+    nodes.set(contents[index], { closest: () => menu.panel });
+    emit('click', menu.trigger); h.flush();
+    assert.equal(menu.isOpen(), false);
+  }
+});
+
 test('header menus preserve modified links and mobile clicks, and resolve rebuilt triggers', () => {
   const { menus, emit, nodes, h, close } = headerMenusHarness();
   const [, notice, avatar] = menus;
   assert.equal(emit('click', notice.trigger, { ctrlKey: true }).defaultPrevented, undefined);
   assert.equal(notice.isOpen(), false);
-  nodes.delete('.g-user-dropdown .message-box');
-  nodes.delete('.g-user-dropdown .g-user-drawer');
+  h.context.innerWidth = 1024;
   assert.equal(emit('click', notice.trigger).defaultPrevented, undefined);
   assert.equal(emit('click', avatar.trigger).defaultPrevented, undefined);
+  h.context.innerWidth = 1200;
   const rebuilt = { ...notice.trigger };
   nodes.set('.g-toolbar-right .g-notice-btn', rebuilt);
   nodes.set('.g-user-dropdown .message-box', { closest: () => notice.panel });
