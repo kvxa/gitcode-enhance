@@ -2,7 +2,7 @@
 // @name         GitCode / AtomGit 增强
 // @name:en      GitCode Enhance
 // @namespace    https://github.com/JavaZeroo/gitcode-enhance
-// @version      0.3.6
+// @version      0.3.7
 // @description  GitCode 评审增强：Ctrl+F 跨文件差异搜索与高亮、回到顶部、可配置悬浮工具、去干扰和按需性能优化
 // @description:en  Cross-file PR diff search and highlighting, back to top, configurable floating tools, decluttering and on-demand optimizations
 // @author       JavaZeroo
@@ -33,7 +33,7 @@
   // Tampermonkey 在有 @grant 时会把 window 换成沙箱代理，直接改 window.fetch 只会改到沙箱里的副本，
   // 页面代码看不到。要拦截页面请求必须打到页面真正的 window（unsafeWindow）上。
   const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-  const VERSION = '0.3.6';
+  const VERSION = '0.3.7';
   const PR_PAGE_RE = /^\/[^/]+\/[^/]+\/(?:pull|merge_requests)\/\d+(?:\/discuss)?\/?$/;
 
   function log(...args) {
@@ -535,7 +535,9 @@
       [class*="sjtu"], .sign-in-entry, .campus-welcome, .user-preference-survey,
       .dashboard-sidebar__site-shortcuts a[href*="news.gitcode.com"],
       .home-header-actions__discover-btn,
+      .g-user-drawer #news,
       .g-user-drawer .user-level { display: none !important; }
+      .g-user-drawer .user-level + .g-user-drawer-block { padding-top: 0 !important; }
     `);
     if (rules.length) addStyle(rules.join('\n'));
 
@@ -1346,7 +1348,7 @@
       body.appendChild(toggleRow('隐藏客服悬浮窗', '右下角 udesk 客服聊天入口（仅隐藏；要连轮询一起停掉见下方「拦截客服 SDK」）', () => draft.adblock.udeskWidget, (v) => (draft.adblock.udeskWidget = v)));
       body.appendChild(toggleRow('隐藏右侧悬浮工具条', '反馈 / 帮助图标条', () => draft.adblock.floatTools, (v) => (draft.adblock.floatTools = v)));
       body.appendChild(toggleRow('隐藏 AI 翻译提示条', 'README 顶部「以下内容由 AI 翻译…」', () => draft.adblock.aiTranslateNotice, (v) => (draft.adblock.aiTranslateNotice = v)));
-      body.appendChild(toggleRow('隐藏活动 / 营销位', '活动广告轮播、校园活动弹窗、签到入口、探索更多按钮和账号菜单积分横幅', () => draft.adblock.promo, (v) => (draft.adblock.promo = v)));
+      body.appendChild(toggleRow('隐藏活动 / 营销位', '活动广告轮播、校园活动弹窗、签到入口、探索更多按钮、账号菜单积分横幅和资讯中心', () => draft.adblock.promo, (v) => (draft.adblock.promo = v)));
 
       body.appendChild(h('h2', { text: '美化' }));
       body.appendChild(toggleRow('GitHub 风格', '保留原生背景和评论布局，仅调整字体、README 圆角及阴影', () => draft.theme.github, (v) => (draft.theme.github = v)));
@@ -1452,6 +1454,59 @@
     GM_registerMenuCommand('⚙️ 打开设置面板 (Alt+G)', openPanel);
   }
 
+  // 保留站点菜单和事件处理，只将顶栏三个菜单的悬停入口改为点击入口。
+  function installHeaderMenuClicks() {
+    const menus = [
+      { trigger: '.g-toolbar-right #guide-step3', content: '#gitcode-header-create-menu' },
+      { trigger: '.g-toolbar-right .g-notice-btn', content: '.g-user-dropdown .message-box' },
+      { trigger: '.g-toolbar-right .g-user-avatar', content: '.g-user-dropdown .g-user-drawer' },
+    ];
+    const triggers = menus.map(menu => menu.trigger).join(', ');
+    const contents = menus.map(menu => menu.content).join(', ');
+    const forwarded = new WeakSet();
+    const visible = panel => panel.getClientRects().length > 0;
+    const mountedMenus = () => menus.map(menu => ({
+      trigger: document.querySelector(menu.trigger),
+      panel: document.querySelector(menu.content)?.closest('.devui-flexible-overlay'),
+    })).filter(menu => menu.trigger && menu.panel);
+    function forward(trigger, type) {
+      const event = new W.MouseEvent(type);
+      forwarded.add(event);
+      trigger.dispatchEvent(event);
+    }
+    function closeMenus() {
+      for (const menu of mountedMenus()) if (visible(menu.panel)) forward(menu.trigger, 'mouseleave');
+    }
+    function blockHover(event) {
+      if (forwarded.has(event)) return;
+      const target = event.target;
+      if (target.matches?.(triggers) ||
+          (target.matches?.('.devui-flexible-overlay, .devui-dropdown__menu-wrap') && target.querySelector(contents))) {
+        event.stopImmediatePropagation();
+      }
+    }
+    // mouseenter / mouseleave 不冒泡，捕获阶段可在站点的目标监听器之前阻止它们。
+    document.addEventListener('mouseenter', blockHover, true);
+    document.addEventListener('mouseleave', blockHover, true);
+    document.addEventListener('click', event => {
+      const trigger = event.target.closest?.(triggers);
+      if (trigger && (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)) return;
+      const mounted = mountedMenus();
+      const current = mounted.find(menu => menu.trigger === trigger);
+      const wasOpen = current && visible(current.panel);
+      for (const menu of mounted) {
+        if (visible(menu.panel) && !menu.panel.contains(event.target)) forward(menu.trigger, 'mouseleave');
+      }
+      // 移动布局没有桌面弹层，保留通知链接和头像抽屉的原生点击行为。
+      if (!current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!wasOpen) forward(current.trigger, 'mouseenter');
+    }, true);
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') closeMenus(); }, true);
+    return closeMenus;
+  }
+
   // 页面内入口：顶栏右侧塞一个齿轮按钮（Tampermonkey 菜单项需要 GM_registerMenuCommand 授权，
   // 旧版加载器没有这个 grant 就看不到菜单，所以页面里也放一个）。
   function installHeaderButton() {
@@ -1480,6 +1535,7 @@
     bar.insertBefore(btn, bar.firstChild);
   }
   installHeaderButton();
+  const closeHeaderMenus = installHeaderMenuClicks();
 
   // 挂在 body 下的独立入口，不依赖站点顶栏，也不参与 Vue 管理的 DOM。
   function installFloatingSettings() {
@@ -1544,6 +1600,7 @@
     const routeKey = path + location.search;
     if (routeKey === lastPath) return;
     lastPath = routeKey;
+    closeHeaderMenus();
     cancelRouteWork(); stopDeclutter(); stopReviewTools(); cancelPRExpansion();
     closeDiffSearch();
     clearDiffCache();

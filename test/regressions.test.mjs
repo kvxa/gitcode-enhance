@@ -30,7 +30,7 @@ function harness(path = '/org/repo/pull/10/discuss') {
       querySelector: () => button, querySelectorAll: selector => selector === '.collapse-btn__more' && button ? [button] : [],
       getElementsByTagName: () => uses,
     },
-    MutationObserver: Observer, MouseEvent: class {}, XMLHttpRequest: XHR,
+    MutationObserver: Observer, MouseEvent: class { constructor(type) { this.type = type; } }, XMLHttpRequest: XHR,
     setTimeout(fn) { timers.set(++nextId, fn); return nextId; },
     clearTimeout(id) { timers.delete(id); },
     innerHeight: 800, innerWidth: 1200,
@@ -40,7 +40,7 @@ function harness(path = '/org/repo/pull/10/discuss') {
   context.window = context;
   // Run the real definitions and settings, stopping before UI/bootstrap side effects.
   const prefix = source.slice(0, source.indexOf('  installHeaderButton();'));
-  vm.runInContext(prefix + '\n globalThis.api = { settings, declutter, stopDeclutter: () => stopDeclutter(), recordBlock, expireDiffCache, clearDiffCache, cache: () => diffSearchCache, seedCache: value => { diffSearchCache = value; }, afterPageReady, codeTextRanges, hitLineLookup, textMatchOffsets, floatingStyle, indexDiffSnapshot, indexDiffSnapshotAsync, prioritizeDiffFiles, PR_PAGE_RE, readDiffSnapshot, parseDiffLines, searchDiffRows, stats, matchRule, installNetworkBlocking, installIconSpritePruner, autoExpandPRComments, cancel: () => cancelPRExpansion() }; })();', context);
+  vm.runInContext(prefix + '\n globalThis.api = { settings, installHeaderMenuClicks, declutter, stopDeclutter: () => stopDeclutter(), recordBlock, expireDiffCache, clearDiffCache, cache: () => diffSearchCache, seedCache: value => { diffSearchCache = value; }, afterPageReady, codeTextRanges, hitLineLookup, textMatchOffsets, floatingStyle, indexDiffSnapshot, indexDiffSnapshotAsync, prioritizeDiffFiles, PR_PAGE_RE, readDiffSnapshot, parseDiffLines, searchDiffRows, stats, matchRule, installNetworkBlocking, installIconSpritePruner, autoExpandPRComments, cancel: () => cancelPRExpansion() }; })();', context);
   return {
     context, api: context.api, attrs, uses, observers, timers,
     setButton(value) {
@@ -51,12 +51,112 @@ function harness(path = '/org/repo/pull/10/discuss') {
       }
       button = value;
     },
-    event(type, windowEvent = false) { for (const fn of (windowEvent ? winListeners : docListeners).get(type) || []) fn(); },
+    event(type, windowEvent = false, event) { for (const fn of (windowEvent ? winListeners : docListeners).get(type) || []) fn(event); },
     listenerCount(type, windowEvent = false) { return (windowEvent ? winListeners : docListeners).get(type)?.size || 0; },
     flush() { const batch = [...timers.values()]; timers.clear(); for (const fn of batch) fn(); },
     mutate(records = []) { for (const o of observers) if (o.active) o.callback(records); },
   };
 }
+
+function headerMenusHarness() {
+  const h = harness(), nodes = new Map();
+  const selectors = [
+    ['.g-toolbar-right #guide-step3', '#gitcode-header-create-menu'],
+    ['.g-toolbar-right .g-notice-btn', '.g-user-dropdown .message-box'],
+    ['.g-toolbar-right .g-user-avatar', '.g-user-dropdown .g-user-drawer'],
+  ];
+  function emit(type, target, extra = {}) {
+    const event = { type, target, button: 0,
+      preventDefault() { this.defaultPrevented = true; },
+      stopPropagation() { this.stopped = true; },
+      stopImmediatePropagation() { this.immediateStopped = true; }, ...extra };
+    h.event(type, false, event);
+    return event;
+  }
+  const menus = selectors.map(([selector, content]) => {
+    let open = false;
+    const panel = {
+      getClientRects: () => open ? [{}] : [],
+      matches: value => value.split(', ').includes('.devui-flexible-overlay'),
+      querySelector: () => ({}),
+      contains: target => target === panel || target === item,
+      closest: () => null,
+    };
+    const item = { closest: () => null };
+    const trigger = {
+      matches: value => value.split(', ').includes(selector),
+      closest(value) { return this.matches(value) ? this : null; },
+      dispatchEvent(event) {
+        event.target = this;
+        h.event(event.type, false, event);
+        if (event.immediateStopped) return;
+        if (event.type === 'mouseenter') open = true;
+        if (event.type === 'mouseleave') h.context.setTimeout(() => { open = false; });
+      },
+    };
+    nodes.set(selector, trigger);
+    nodes.set(content, { closest: () => panel });
+    return { trigger, panel, item, isOpen: () => open };
+  });
+  h.context.document.querySelector = selector => nodes.get(selector) || null;
+  const close = h.api.installHeaderMenuClicks();
+  return { h, menus, nodes, emit, close };
+}
+
+test('header menus ignore hover, toggle on click and stay open when the pointer leaves', () => {
+  const { menus, emit, h } = headerMenusHarness();
+  for (const menu of menus) {
+    assert.equal(emit('mouseenter', menu.trigger).immediateStopped, true);
+    assert.equal(menu.isOpen(), false);
+    // Icon clicks resolve to the enclosing trigger; the notification link must not navigate.
+    const icon = { closest: () => menu.trigger };
+    assert.equal(emit('click', icon).defaultPrevented, true);
+    assert.equal(menu.isOpen(), true);
+    assert.equal(emit('mouseleave', menu.trigger).immediateStopped, true);
+    assert.equal(emit('mouseleave', menu.panel).immediateStopped, true);
+    const menuWrap = {
+      matches: value => value.split(', ').includes('.devui-dropdown__menu-wrap'),
+      querySelector: () => ({}),
+    };
+    assert.equal(emit('mouseenter', menuWrap).immediateStopped, true);
+    assert.equal(emit('mouseleave', menuWrap).immediateStopped, true);
+    h.flush(); assert.equal(menu.isOpen(), true);
+    emit('click', menu.trigger); h.flush();
+    assert.equal(menu.isOpen(), false);
+  }
+});
+
+test('header menus switch on click, preserve menu actions, and close outside or on Escape', () => {
+  const { menus, emit, h } = headerMenusHarness();
+  const [create, notice, avatar] = menus;
+  emit('click', create.trigger);
+  emit('click', notice.trigger); h.flush();
+  assert.equal(create.isOpen(), false);
+  assert.equal(notice.isOpen(), true);
+  assert.equal(emit('click', notice.item).defaultPrevented, undefined);
+  h.flush(); assert.equal(notice.isOpen(), true);
+  emit('click', { closest: () => null }); h.flush();
+  assert.equal(notice.isOpen(), false);
+  emit('click', avatar.trigger);
+  emit('keydown', avatar.trigger, { key: 'Escape' }); h.flush();
+  assert.equal(avatar.isOpen(), false);
+});
+
+test('header menus preserve modified links and mobile clicks, and resolve rebuilt triggers', () => {
+  const { menus, emit, nodes, h, close } = headerMenusHarness();
+  const [, notice, avatar] = menus;
+  assert.equal(emit('click', notice.trigger, { ctrlKey: true }).defaultPrevented, undefined);
+  assert.equal(notice.isOpen(), false);
+  nodes.delete('.g-user-dropdown .message-box');
+  nodes.delete('.g-user-dropdown .g-user-drawer');
+  assert.equal(emit('click', notice.trigger).defaultPrevented, undefined);
+  assert.equal(emit('click', avatar.trigger).defaultPrevented, undefined);
+  const rebuilt = { ...notice.trigger };
+  nodes.set('.g-toolbar-right .g-notice-btn', rebuilt);
+  nodes.set('.g-user-dropdown .message-box', { closest: () => notice.panel });
+  emit('click', rebuilt); assert.equal(notice.isOpen(), true);
+  close(); h.flush(); assert.equal(notice.isOpen(), false);
+});
 
 test('index retains searchable rows without retaining the raw patch', () => {
   const { indexDiffSnapshot, searchDiffRows } = harness().api;
