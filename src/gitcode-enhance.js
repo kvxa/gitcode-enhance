@@ -510,7 +510,12 @@
     const ab = settings.adblock;
     if (ab.udeskWidget) rules.push('#udesk_container, #udesk_iframe, #udesk_panel { display: none !important; }');
     if (ab.floatTools) rules.push('.gitcode-tools-float-root { display: none !important; }');
-    if (ab.promo) rules.push('[class*="sjtu"], .sign-in-entry, .campus-welcome, .user-preference-survey, .dashboard-sidebar__site-shortcuts a[href*="news.gitcode.com"] { display: none !important; }');
+    if (ab.promo) rules.push(`
+      [class*="sjtu"], .sign-in-entry, .campus-welcome, .user-preference-survey,
+      .dashboard-sidebar__site-shortcuts a[href*="news.gitcode.com"],
+      .home-header-actions__discover-btn,
+      .g-user-drawer .user-level { display: none !important; }
+    `);
     if (rules.length) addStyle(rules.join('\n'));
 
     if (settings.perf.hideAiUi) {
@@ -1320,7 +1325,7 @@
       body.appendChild(toggleRow('隐藏客服悬浮窗', '右下角 udesk 客服聊天入口（仅隐藏；要连轮询一起停掉见下方「拦截客服 SDK」）', () => draft.adblock.udeskWidget, (v) => (draft.adblock.udeskWidget = v)));
       body.appendChild(toggleRow('隐藏右侧悬浮工具条', '反馈 / 帮助图标条', () => draft.adblock.floatTools, (v) => (draft.adblock.floatTools = v)));
       body.appendChild(toggleRow('隐藏 AI 翻译提示条', 'README 顶部「以下内容由 AI 翻译…」', () => draft.adblock.aiTranslateNotice, (v) => (draft.adblock.aiTranslateNotice = v)));
-      body.appendChild(toggleRow('隐藏活动 / 营销位', '活动广告轮播、校园活动弹窗、签到入口', () => draft.adblock.promo, (v) => (draft.adblock.promo = v)));
+      body.appendChild(toggleRow('隐藏活动 / 营销位', '活动广告轮播、校园活动弹窗、签到入口、探索更多按钮和账号菜单积分横幅', () => draft.adblock.promo, (v) => (draft.adblock.promo = v)));
 
       body.appendChild(h('h2', { text: '美化' }));
       body.appendChild(toggleRow('GitHub 风格', '保留原生背景和评论布局，仅调整字体、README 圆角及阴影', () => draft.theme.github, (v) => (draft.theme.github = v)));
